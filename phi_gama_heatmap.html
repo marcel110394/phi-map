@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>φ-Map & Zeitreihe</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <style>
+    body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; }
+    #container { display: flex; height: 100vh; }
+    #map { width: 60%; height: 100%; }
+    #chart-container { width: 40%; padding: 10px; box-sizing: border-box; background: #f8f8f8; }
+    canvas { width: 100%; height: 90%; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="map"></div>
+    <div id="chart-container">
+      <h3>φ(t) & γ(t)</h3>
+      <canvas id="phiChart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const map = L.map('map').setView([48.2, 14.3], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let heat;
+
+    function colorScale(phi) {
+      if (phi >= 1.0) return "#ff0000";
+      if (phi >= 0.5) return "#ff8000";
+      if (phi >= 0.2) return "#ffff00";
+      if (phi >= 0.1) return "#80ff00";
+      return "#00ccff";
+    }
+
+    async function updateMapAndChart() {
+      const res = await fetch('phi_daten_log.json');
+      const data = await res.json();
+
+      const solarRes = await fetch('phi_sonnenwind.csv');
+      const solarText = await solarRes.text();
+      const solarLines = solarText.trim().split('\n');
+      const lastLine = solarLines[solarLines.length - 1].split(',');
+      const density = parseFloat(lastLine[6] || 0).toFixed(2);
+      const speed = parseFloat(lastLine[7] || 0).toFixed(0);
+
+      const points = [];
+      const labels = [];
+      const phi = [];
+      const gamma = [];
+
+      data.forEach(d => {
+        if (d.lat !== "NA" && d.lng !== "NA") {
+          const lat = parseFloat(d.lat);
+          const lng = parseFloat(d.lng);
+          const phiVal = d.phi || 0;
+          const gammaVal = d.gamma || 0;
+          const popup = `
+            <b>φ:</b> ${phiVal}<br>
+            <b>γ:</b> ${gammaVal}<br>
+            <b>Zeit:</b> ${d.time}<br>
+            <b>Sonnenwind:</b><br>
+            Dichte: ${density} / Geschwindigkeit: ${speed} km/s
+          `;
+          L.circleMarker([lat, lng], {
+            radius: 6,
+            fillColor: colorScale(phiVal),
+            fillOpacity: 0.7,
+            color: "black",
+            weight: 1
+          }).addTo(map).bindPopup(popup);
+          points.push([lat, lng, phiVal]);
+
+          labels.push(d.time);
+          phi.push(phiVal);
+          gamma.push(gammaVal);
+        }
+      });
+
+      if (heat) map.removeLayer(heat);
+      heat = L.heatLayer(points, { radius: 20, blur: 15, maxZoom: 12 }).addTo(map);
+
+      // Chart initialisieren
+      const ctx = document.getElementById('phiChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'φ(t)',
+              data: phi,
+              borderColor: 'red',
+              fill: false,
+              tension: 0.2
+            },
+            {
+              label: 'γ(t)',
+              data: gamma,
+              borderColor: 'blue',
+              fill: false,
+              tension: 0.2
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { display: true, title: { display: true, text: 'Zeit' }},
+            y: { display: true, title: { display: true, text: 'Wert' }}
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                afterLabel: function(context) {
+                  const index = context.dataIndex;
+                  const d = data[index];
+                  return [
+                    'GSR: ' + d.gsr,
+                    'Magnetfeld: ' + d.mag
+                  ];
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    updateMapAndChart();
+    setInterval(updateMapAndChart, 20000);
+  </script>
+</body>
+</html>
